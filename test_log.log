@@ -1,0 +1,39 @@
+# --- Сценарий 1: Подбор пароля по SSH (5 неуспешных попыток для одного IP/юзера) ---
+type=USER_AUTH msg=audit(1732701601.101:1001): pid=1234 uid=0 auid=1000 tty=pts0 ses=1 exe="/usr/sbin/sshd" addr=192.0.2.10 terminal=ssh res=failed success=no
+type=USER_AUTH msg=audit(1732701605.202:1002): pid=1234 uid=0 auid=1000 tty=pts0 ses=1 exe="/usr/sbin/sshd" addr=192.0.2.10 terminal=ssh res=failed success=no
+type=USER_AUTH msg=audit(1732701610.303:1003): pid=1234 uid=0 auid=1000 tty=pts0 ses=1 exe="/usr/sbin/sshd" addr=192.0.2.10 terminal=ssh res=failed success=no
+type=USER_AUTH msg=audit(1732701615.404:1004): pid=1234 uid=0 auid=1000 tty=pts0 ses=1 exe="/usr/sbin/sshd" addr=192.0.2.10 terminal=ssh res=failed success=no
+type=USER_AUTH msg=audit(1732701620.505:1005): pid=1234 uid=0 auid=1000 tty=pts0 ses=1 exe="/usr/sbin/sshd" addr=192.0.2.10 terminal=ssh res=failed success=no
+
+# Пара нормальных успешных логинов (для контраста, чтобы не попали в инцидент)
+type=USER_AUTH msg=audit(1732702000.100:1010): pid=2233 uid=0 auid=1001 tty=pts0 ses=2 exe="/usr/sbin/sshd" addr=198.51.100.20 terminal=ssh res=success success=yes
+type=USER_LOGIN msg=audit(1732702000.200:1011): pid=2233 uid=0 auid=1001 tty=pts0 ses=2 exe="/usr/sbin/sshd" addr=198.51.100.20 terminal=ssh res=success success=yes
+
+# --- Сценарий 2: Изменение критичных файлов (SYSCALL + PATH с /etc/shadow и /etc/ssh/sshd_config) ---
+
+# Редактирование /etc/shadow (например, через vi)
+type=SYSCALL msg=audit(1732701900.500:2001): arch=c000003e syscall=2 success=yes exit=0 auid=0 uid=0 gid=0 tty=pts0 ses=3 comm="vi" exe="/usr/bin/vi" key="shadow_edit"
+type=PATH msg=audit(1732701900.500:2001): item=0 name="/etc/shadow" inode=12345 dev=fd:00 mode=0100600 ouid=0 ogid=0 nametype=NORMAL
+type=CWD msg=audit(1732701900.500:2001): cwd="/root"
+
+# Редактирование /etc/ssh/sshd_config
+type=SYSCALL msg=audit(1732701950.600:2002): arch=c000003e syscall=2 success=yes exit=0 auid=0 uid=0 gid=0 tty=pts0 ses=3 comm="nano" exe="/usr/bin/nano" key="sshd_config_edit"
+type=PATH msg=audit(1732701950.600:2002): item=0 name="/etc/ssh/sshd_config" inode=23456 dev=fd:00 mode=0100644 ouid=0 ogid=0 nametype=NORMAL
+type=CWD msg=audit(1732701950.600:2002): cwd="/etc/ssh"
+
+# Обычный SYSCALL, не трогающий критичные файлы (для контраста)
+type=SYSCALL msg=audit(1732701960.700:2003): arch=c000003e syscall=2 success=yes exit=0 auid=1000 uid=1000 gid=1000 tty=pts1 ses=4 comm="cat" exe="/usr/bin/cat" key="normal_file"
+type=PATH msg=audit(1732701960.700:2003): item=0 name="/home/user/readme.txt" inode=34567 dev=fd:00 mode=0100644 ouid=1000 ogid=1000 nametype=NORMAL
+type=CWD msg=audit(1732701960.700:2003): cwd="/home/user"
+
+# --- Сценарий 3: Web-shell — запуск bash от сервисного пользователя (www-data, uid=33) ---
+
+# Пример: execve("/bin/bash") от пользователя www-data (uid=33) в /var/www/html
+type=SYSCALL msg=audit(1732702100.800:3001): arch=c000003e syscall=59 success=yes exit=0 auid=33 uid=33 gid=33 tty=(none) ses=5 comm="bash" exe="/bin/bash" key="web_shell"
+type=CWD msg=audit(1732702100.800:3001): cwd="/var/www/html"
+type=PATH msg=audit(1732702100.800:3001): item=0 name="/bin/bash" inode=45678 dev=fd:00 mode=0100755 ouid=0 ogid=0 nametype=NORMAL
+
+# Для контраста — запуск bash от обычного пользователя (не должен попадать в web-shell сценарий)
+type=SYSCALL msg=audit(1732702200.900:3002): arch=c000003e syscall=59 success=yes exit=0 auid=1000 uid=1000 gid=1000 tty=pts2 ses=6 comm="bash" exe="/bin/bash" key="user_shell"
+type=CWD msg=audit(1732702200.900:3002): cwd="/home/user"
+type=PATH msg=audit(1732702200.900:3002): item=0 name="/bin/bash" inode=45678 dev=fd:00 mode=0100755 ouid=0 ogid=0 nametype=NORMAL
