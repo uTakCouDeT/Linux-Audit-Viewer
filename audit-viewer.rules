@@ -1,0 +1,29 @@
+-D 			## Очищаем старые правила при загрузке
+-b 8192 	## Размер буфера событий
+
+## Логировать запуск программ (execve) для обычных пользователей
+-a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=4294967295 -k exec_user_commands
+
+## Пример для пользователя www-data, nginx, apache и т.п.
+-a always,exit -F arch=b64 -S execve -F uid=www-data -k web_shell
+-a always,exit -F arch=b64 -S execve -F uid=nginx -k web_shell
+-a always,exit -F arch=b64 -S execve -F uid=apache -k web_shell
+
+## Либо логировать все execve
+## -a always,exit -F arch=b64 -S execve -k exec_log
+
+## Файлы аутентификации
+-w /etc/passwd          -p wa -k auth_files
+-w /etc/shadow          -p wa -k auth_files
+-w /etc/group           -p wa -k auth_files
+-w /etc/gshadow         -p wa -k auth_files
+
+## Конфигурация SSH
+-w /etc/ssh/sshd_config -p wa -k ssh_config
+
+## Конфигурация sudo
+-w /etc/sudoers         -p wa -k sudo_config
+
+## Конфигурация и правила самого auditd
+-w /etc/audit/auditd.conf    -p wa -k audit_config
+-w /etc/audit/rules.d/       -p wa -k audit_config
