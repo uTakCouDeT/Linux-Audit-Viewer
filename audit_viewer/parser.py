@@ -2,9 +2,14 @@ import re
 from datetime import datetime
 import pwd
 
-AUDIT_LINE_RE = re.compile(r'^type=(\w+)\s+(.*)$')
+# type=USER_AUTH msg=audit(1732701601.123:24287): pid=... ...
+AUDIT_LINE_RE = re.compile(
+    r'^type=(?P<type>\w+)\s+msg=audit\((?P<ts>[\d\.]+):(?P<eid>\d+)\):\s*(?P<data>.*)$'
+)
+
 FIELD_RE = re.compile(r'(\w+)=(".*?"|\S+)')
 UNSET_AUID_VALUES = {"-1", "4294967295"}
+
 
 def parse_audit_line(line: str):
     """
@@ -25,35 +30,32 @@ def parse_audit_line(line: str):
 
     m = AUDIT_LINE_RE.match(line)
     if not m:
+        # строка не в формате "type=... msg=audit(...): ..."
         return None
 
-    rec_type = m.group(1)
-    rest = m.group(2)
+    rec_type = m.group("type")
+    ts_str = m.group("ts")
+    eid_str = m.group("eid")
+    data = m.group("data") or ""
+
+    try:
+        timestamp = float(ts_str)
+    except ValueError:
+        timestamp = None
+
+    try:
+        event_id = int(eid_str)
+    except ValueError:
+        event_id = None
 
     fields = {}
-    for fm in FIELD_RE.finditer(rest):
+    for fm in FIELD_RE.finditer(data):
         key = fm.group(1)
         value = fm.group(2)
         # убираем кавычки по краям, если есть
         if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
             value = value[1:-1]
         fields[key] = value
-
-    # Достаём timestamp и event_id из msg=audit(...)
-    timestamp = None
-    event_id = None
-    msg_val = fields.get("msg")
-    if msg_val and msg_val.startswith("audit("):
-        # msg=audit(1732701601.123:24287)
-        # убираем возможное двоеточие в конце
-        msg_clean = msg_val.rstrip(":")
-        m2 = re.match(r'audit\(([\d\.]+):(\d+)\)', msg_clean)
-        if m2:
-            try:
-                timestamp = float(m2.group(1))
-                event_id = int(m2.group(2))
-            except ValueError:
-                pass
 
     return {
         "type": rec_type,
@@ -163,13 +165,23 @@ def build_event_summary(event_records):
     exe = f.get("exe", "")
     key = f.get("key", "")
 
-    # success=yes/no/1/0 → bool
-    success_val = f.get("success")
+    # success=yes/no/1/0 → bool, либо res=success/failed
     success = None
+    success_val = f.get("success")
     if success_val is not None:
-        success = success_val in ("yes", "1", "true", "TRUE", "Yes")
+        val = str(success_val).lower()
+        success = val in ("yes", "1", "true", "ok")
     else:
-        success = True  # если поля нет — считаем успешным
+        res_val = f.get("res")
+        if res_val is not None:
+            val = str(res_val).lower()
+            if val in ("success", "ok", "1"):
+                success = True
+            elif val in ("failed", "fail", "error", "0"):
+                success = False
+        # если нет ни success, ни res — можно оставить None или считать True
+        elif success is None:
+            success = True
 
     # Собираем детали: просто объединяем все поля из всех records
     details = {}
@@ -235,7 +247,6 @@ def parse_audit_log_file(path: str):
         if ev:
             events.append(ev)
 
-    # Можно отсортировать по времени (по строковому полю time)
-    events.sort(key=lambda e: e["time"])
-
+    # Сортируем по числовому timestamp (если None — считаем 0)
+    events.sort(key=lambda e: e.get("timestamp") or 0.0, reverse=True)
     return events
