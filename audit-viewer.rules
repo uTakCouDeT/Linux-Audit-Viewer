@@ -1,16 +1,28 @@
--D 			## Очищаем старые правила при загрузке
--b 8192 	## Размер буфера событий
+## Очищаем старые правила при загрузке
+-D
+
+## Размер буфера событий
+-b 8192
 
 ## Логировать запуск программ (execve) для обычных пользователей
 -a always,exit -F arch=b64 -S execve -F auid>=1000 -F auid!=4294967295 -k exec_user_commands
+-a always,exit -F arch=b32 -S execve -F auid>=1000 -F auid!=4294967295 -k exec_user_commands
 
 ## Пример для пользователя www-data, nginx, apache и т.п.
 -a always,exit -F arch=b64 -S execve -F uid=www-data -k web_shell
+-a always,exit -F arch=b32 -S execve -F uid=www-data -k web_shell
+
+## Логировать запуск программ (execve) для nginx
 -a always,exit -F arch=b64 -S execve -F uid=nginx -k web_shell
+-a always,exit -F arch=b32 -S execve -F uid=nginx -k web_shell
+
+## Логировать запуск программ (execve) для apache
 -a always,exit -F arch=b64 -S execve -F uid=apache -k web_shell
+-a always,exit -F arch=b32 -S execve -F uid=apache -k web_shell
 
 ## Либо логировать все execve
 ## -a always,exit -F arch=b64 -S execve -k exec_log
+## -a always,exit -F arch=b32 -S execve -k exec_log
 
 ## Файлы аутентификации
 -w /etc/passwd          -p wa -k auth_files
@@ -27,3 +39,4 @@
 ## Конфигурация и правила самого auditd
 -w /etc/audit/auditd.conf    -p wa -k audit_config
 -w /etc/audit/rules.d/       -p wa -k audit_config
+	
