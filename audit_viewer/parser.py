@@ -1,36 +1,28 @@
+from __future__ import annotations
+
 import re
 from datetime import datetime
+from collections import Counter
 import pwd
+from typing import Any, Dict, List, Optional, Tuple
 
-# type=USER_AUTH msg=audit(1732701601.123:24287): pid=... ...
-AUDIT_LINE_RE = re.compile(
-    r'^type=(?P<type>\w+)\s+msg=audit\((?P<ts>[\d\.]+):(?P<eid>\d+)\):\s*(?P<data>.*)$'
-)
-
-FIELD_RE = re.compile(r'(\w+)=(".*?"|\S+)')
+# Специальные значения для "неустановленного" auid
 UNSET_AUID_VALUES = {"-1", "4294967295"}
+
+# --- Регулярные выражения для разбора строк журнала auditd ---
+AUDIT_LINE_RE = re.compile(
+    r'^type=(?P<type>\S+)\s+msg=audit\((?P<ts>[\d\.]+):(?P<eid>\d+)\):\s*(?P<data>.*)$'
+)
+FIELD_RE = re.compile(r'([A-Za-z0-9_]+)=(".*?"|\S+)')
 
 
 def parse_audit_line(line: str):
-    """
-    Разбирает одну строку audit.log.
-    Возвращает dict с полями:
-    {
-        "type": "SYSCALL" / "PATH" / ...,
-        "timestamp": float или None,
-        "event_id": int или None,
-        "fields": { "uid": "...", "auid": "...", ... },
-        "raw": исходная_строка
-    }
-    Если строка не подходит под формат auditd — возвращает None.
-    """
     line = line.strip()
     if not line:
         return None
 
     m = AUDIT_LINE_RE.match(line)
     if not m:
-        # строка не в формате "type=... msg=audit(...): ..."
         return None
 
     rec_type = m.group("type")
@@ -52,9 +44,16 @@ def parse_audit_line(line: str):
     for fm in FIELD_RE.finditer(data):
         key = fm.group(1)
         value = fm.group(2)
-        # убираем кавычки по краям, если есть
-        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+
+        # 1) убираем парные кавычки "..." или '...'
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
             value = value[1:-1]
+        else:
+            # 2) типичный артефакт: res=failed'
+            #    убираем висящую одинокую кавычку в конце
+            if value.endswith("'"):
+                value = value[:-1]
+
         fields[key] = value
 
     return {
@@ -75,15 +74,22 @@ def format_timestamp(ts: float) -> str:
         return ""
 
 
-def resolve_user(auid_str: str | None, uid_str: str | None) -> str:
+def resolve_user(auid_str: Optional[str], uid_str: Optional[str]) -> str:
     """
     Превращает auid/uid из лога в человекочитаемое значение:
-    - пытается использовать auid, если он валиден,
-    - иначе uid,
-    - пытается получить имя пользователя через pwd.getpwuid,
+
+    - приоритетно использует auid, если он валиден;
+    - иначе uid;
+    - пытается получить имя пользователя через pwd.getpwuid;
     - корректно обрабатывает -1/4294967295 (unset).
+
+    Возвращает строку вида:
+        - "unset"
+        - "root (0)"
+        - "username (1000)"
+        - "1001" (если UID не найден в системе)
+        - исходное значение, если его нельзя привести к int.
     """
-    # Берём приоритетно auid, если есть
     raw = auid_str or uid_str
     if raw is None:
         return "?"
@@ -116,46 +122,94 @@ def resolve_user(auid_str: str | None, uid_str: str | None) -> str:
         return f"{uid_val}"
 
 
-def build_event_summary(event_records):
+def _merge_fields_to_details(event_records: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    На основе списка record'ов (одного event_id) строим
-    краткую сводку для таблицы и details/raw для нижней панели.
+    Собирает все поля из всех record'ов события в один словарь details.
+
+    Если ключ встречается несколько раз (например, несколько PATH/name),
+    значения агрегируются в список. Это важно для корректного анализа
+    изменений нескольких файлов в рамках одного события.
+    """
+    details: Dict[str, Any] = {}
+
+    for rec in event_records:
+        for k, v in rec["fields"].items():
+            if k in details:
+                # уже есть значение → агрегируем в список
+                if isinstance(details[k], list):
+                    details[k].append(v)
+                else:
+                    details[k] = [details[k], v]
+            else:
+                details[k] = v
+
+    return details
+
+
+def _choose_main_record(event_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Выбирает "основную" запись события, на основе которой формируется summary.
+
+    Приоритет:
+        1) SYSCALL  — для системных вызовов и файловых операций;
+        2) USER_AUTH / USER_LOGIN — для аутентификации и логинов;
+        3) первая запись в списке.
+    """
+    # 1. SYSCALL
+    for rec in event_records:
+        if rec["type"] == "SYSCALL":
+            return rec
+
+    # 2. USER_AUTH / USER_LOGIN
+    for rec in event_records:
+        if rec["type"] in ("USER_AUTH", "USER_LOGIN"):
+            return rec
+
+    # 3. fallback: первая запись
+    return event_records[0]
+
+
+def build_event_summary(event_records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    На основе списка record'ов (одного события) строит краткую сводку
+    для таблицы и details/raw для нижней панели.
+
     Возвращает dict:
-    {
-        "time": ...,
-        "user": ...,
-        "event_type": ...,
-        "comm": ...,
-        "exe": ...,
-        "success": bool,
-        "key": ...,
-        "details": { ... },
-        "raw": "строки лога\n..."
-    }
+        {
+            "time": ...,
+            "timestamp": ...,
+            "user": ...,
+            "event_type": ...,
+            "comm": ...,
+            "exe": ...,
+            "pid": ...,
+            "ppid": ...,
+            "syscall": ...,
+            "exit": ...,
+            "cwd": ...,
+            "success": bool | None,
+            "key": ...,
+            "details": { ... },
+            "raw": "строки лога\n..."
+        }
     """
     if not event_records:
         return None
 
-    # timestamp возьмём из первого нормального
-    ts = None
+    # timestamp возьмём как минимальный ненулевой из всех записей события
+    ts: Optional[float] = None
     for rec in event_records:
         if rec["timestamp"] is not None:
-            ts = rec["timestamp"]
-            break
+            if ts is None or rec["timestamp"] < ts:
+                ts = rec["timestamp"]
 
     time_str = format_timestamp(ts) if ts is not None else ""
 
-    # Найдём основной record: SYSCALL, если есть, иначе первый
-    main_rec = None
-    for rec in event_records:
-        if rec["type"] == "SYSCALL":
-            main_rec = rec
-            break
-    if main_rec is None:
-        main_rec = event_records[0]
-
+    # выбираем основной record
+    main_rec = _choose_main_record(event_records)
     f = main_rec["fields"]
 
+    # пользователь
     auid = f.get("auid")
     uid = f.get("uid")
     user = resolve_user(auid, uid)
@@ -163,10 +217,23 @@ def build_event_summary(event_records):
     event_type = main_rec["type"]
     comm = f.get("comm", "")
     exe = f.get("exe", "")
+
+    # дополнительные "верхнеуровневые" поля, полезные в таблице
+    pid = f.get("pid")
+    ppid = f.get("ppid")
+    syscall = f.get("syscall")
+    exit_code = f.get("exit")
+    cwd = f.get("cwd")
+    tty = f.get("tty")
+    acct = f.get("acct")
+    addr = f.get("addr") or f.get("addr4") or f.get("addr6")
+    hostname = f.get("hostname") or f.get("node")
+
     key = f.get("key", "")
 
-    # success=yes/no/1/0 → bool, либо res=success/failed
-    success = None
+    # success=yes/no/1/0 → bool
+    # либо res=success/failed → bool
+    success: Optional[bool] = None
     success_val = f.get("success")
     if success_val is not None:
         val = str(success_val).lower()
@@ -179,20 +246,10 @@ def build_event_summary(event_records):
                 success = True
             elif val in ("failed", "fail", "error", "0"):
                 success = False
-        # если нет ни success, ни res — можно оставить None или считать True
-        elif success is None:
-            success = True
+        # если нет ни success, ни res — оставляем None
 
-    # Собираем детали: просто объединяем все поля из всех records
-    details = {}
-    for rec in event_records:
-        rtype = rec["type"]
-        for k, v in rec["fields"].items():
-            # Можно префиксовать типом, чтобы было видно, откуда поле:
-            # details[f"{rtype}.{k}"] = v
-            # но для простоты пока без префикса, если не конфликтует
-            if k not in details:
-                details[k] = v
+    # Собираем детали (с учётом повторяющихся ключей)
+    details = _merge_fields_to_details(event_records)
 
     raw_lines = [rec["raw"] for rec in event_records]
     raw_text = "\n".join(raw_lines)
@@ -204,6 +261,15 @@ def build_event_summary(event_records):
         "event_type": event_type,
         "comm": comm,
         "exe": exe,
+        "pid": pid,
+        "ppid": ppid,
+        "syscall": syscall,
+        "exit": exit_code,
+        "cwd": cwd,
+        "tty": tty,
+        "acct": acct,
+        "addr": addr,
+        "hostname": hostname,
         "success": success,
         "key": key,
         "details": details,
@@ -211,42 +277,88 @@ def build_event_summary(event_records):
     }
 
 
-def parse_audit_log_file(path: str):
+def parse_audit_log_file(path: str) -> List[Dict[str, Any]]:
     """
-    Читает файл audit.log и возвращает список событий
-    в формате, подходящем для AuditEventsTableModel.
+    Разбирает файл журнала auditd и возвращает список событий
+    в нормализованном виде (подходящем для GUI, сценариев инцидентов и статистики).
+
+    Каждое событие — это dict, возвращаемый build_event_summary().
     """
-    events_by_id = {}  # event_id -> {"records": [], "timestamp": ...}
+    # ключ: (node, event_id, ts_bucket)
+    #   node      — поле node=... (если есть)
+    #   event_id  — идентификатор события из audit(...)
+    #   ts_bucket — секунда таймстампа (для снижения риска коллизий)
+    events_by_id: Dict[Tuple[Optional[str], int, int], Dict[str, Any]] = {}
+
+    total_lines = 0
+    matched_lines = 0
+    skipped_no_match = 0
+    skipped_no_event_id = 0
+    type_counter: Counter[str] = Counter()
 
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
+            total_lines += 1
             rec = parse_audit_line(line)
             if not rec:
+                skipped_no_match += 1
                 continue
+
+            matched_lines += 1
+            type_counter[rec["type"]] += 1
 
             eid = rec["event_id"]
+            ts = rec["timestamp"]
             if eid is None:
-                # Строка без event_id — можно игнорировать или обрабатывать отдельно
+                skipped_no_event_id += 1
                 continue
 
-            bucket = events_by_id.get(eid)
+            fields = rec.get("fields", {})
+            node = fields.get("node")  # для многомашинной агрегации
+
+            ts_bucket = int(ts) if ts is not None else 0
+            key = (node, eid, ts_bucket)
+
+            bucket = events_by_id.get(key)
             if bucket is None:
-                bucket = {"records": [], "timestamp": rec["timestamp"]}
-                events_by_id[eid] = bucket
+                bucket = {"records": [], "timestamp": ts}
+                events_by_id[key] = bucket
 
             bucket["records"].append(rec)
-            # Если timestamp ещё не выставлен, обновляем
-            if bucket["timestamp"] is None and rec["timestamp"] is not None:
-                bucket["timestamp"] = rec["timestamp"]
+            # timestamp события — минимальный ненулевой ts среди record'ов
+            if ts is not None:
+                if bucket["timestamp"] is None or ts < bucket["timestamp"]:
+                    bucket["timestamp"] = ts
 
     # Преобразуем во flat-список событий
-    events = []
-    for eid, bucket in events_by_id.items():
+    events: List[Dict[str, Any]] = []
+    for key, bucket in events_by_id.items():
         event_records = bucket["records"]
         ev = build_event_summary(event_records)
         if ev:
             events.append(ev)
 
-    # Сортируем по числовому timestamp (если None — считаем 0)
+    # сортируем события по времени (от новых к старым)
     events.sort(key=lambda e: e.get("timestamp") or 0.0, reverse=True)
+
+    # при необходимости можно раскомментировать отладочную статистику:
+    # print(f"[parser] file: {path}")
+    # print(f"[parser] total lines          : {total_lines}")
+    # print(f"[parser] matched audit lines  : {matched_lines}")
+    # print(f"[parser] skipped (no match)   : {skipped_no_match}")
+    # print(f"[parser] skipped (no event_id): {skipped_no_event_id}")
+    # print(f"[parser] resulting events     : {len(events)}")
+    # print("[parser] top types:")
+    # for t, cnt in type_counter.most_common(10):
+    #     print(f"  {t:20s} {cnt}")
+
     return events
+
+
+__all__ = [
+    "parse_audit_line",
+    "format_timestamp",
+    "resolve_user",
+    "build_event_summary",
+    "parse_audit_log_file",
+]
