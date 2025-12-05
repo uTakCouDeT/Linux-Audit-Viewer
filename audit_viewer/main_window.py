@@ -127,12 +127,22 @@ class MainWindow(QtWidgets.QMainWindow, EventsTabMixin, IncidentsTabMixin, Stats
         """
         Запускает helper через pkexec для чтения /var/log/audit/audit.log с правами root.
         """
-        python_exe = sys.executable
-        helper_path = Path(__file__).resolve().parent.parent / "audit_helper.py"
+        HELPER_FLAG = "--run-helper"
+
+        if getattr(sys, "frozen", False):
+            # Режим PyInstaller (onefile): sys.executable — это бинарник приложения
+            app_path = Path(sys.executable).resolve()
+            cmd = ["pkexec", str(app_path), HELPER_FLAG]
+        else:
+            # Режим разработки: запускаем main.py через текущий интерпретатор
+            project_root = Path(__file__).resolve().parent.parent
+            entry_path = project_root / "main.py"
+            python_exe = sys.executable
+            cmd = ["pkexec", python_exe, str(entry_path), HELPER_FLAG]
 
         try:
             output = subprocess.check_output(
-                ["pkexec", python_exe, helper_path],
+                cmd,
                 stderr=subprocess.STDOUT,
                 text=True,
             )
