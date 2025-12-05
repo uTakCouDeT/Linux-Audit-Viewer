@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from collections import Counter
-import pwd
+# import pwd
 from typing import Any, Dict, List, Optional, Tuple
 
 # Специальные значения для "неустановленного" auid
@@ -114,12 +114,13 @@ def resolve_user(auid_str: Optional[str], uid_str: Optional[str]) -> str:
         return "root (0)"
 
     # пытаемся найти имя пользователя
-    try:
-        pw = pwd.getpwuid(uid_val)
-        return f"{pw.pw_name} ({uid_val})"
-    except KeyError:
-        # нет такого uid в системе
-        return f"{uid_val}"
+    # try:
+    #     pw = pwd.getpwuid(uid_val)
+    #     return f"{pw.pw_name} ({uid_val})"
+    # except KeyError:
+    #     # нет такого uid в системе
+
+    return f"{uid_val}"
 
 
 def _merge_fields_to_details(event_records: List[Dict[str, Any]]) -> Dict[str, Any]:

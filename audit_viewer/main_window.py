@@ -1,6 +1,6 @@
 from PyQt5 import QtWidgets
-from pathlib import Path
-import sys, json, subprocess
+# from pathlib import Path
+# import sys, json, subprocess
 
 from .parser import parse_audit_log_file
 
@@ -123,76 +123,76 @@ class MainWindow(QtWidgets.QMainWindow, EventsTabMixin, IncidentsTabMixin, Stats
                 path = selected_files[0]
                 self._load_data_from_file(path)
 
-    def _load_data_with_pkexec(self):
-        """
-        Запускает helper через pkexec для чтения /var/log/audit/audit.log с правами root.
-        """
-        HELPER_FLAG = "--run-helper"
-
-        if getattr(sys, "frozen", False):
-            # Режим PyInstaller (onefile): sys.executable — это бинарник приложения
-            app_path = Path(sys.executable).resolve()
-            cmd = ["pkexec", str(app_path), HELPER_FLAG]
-        else:
-            # Режим разработки: запускаем main.py через текущий интерпретатор
-            project_root = Path(__file__).resolve().parent.parent
-            entry_path = project_root / "main.py"
-            python_exe = sys.executable
-            cmd = ["pkexec", python_exe, str(entry_path), HELPER_FLAG]
-
-        try:
-            output = subprocess.check_output(
-                cmd,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        except subprocess.CalledProcessError as e:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Ошибка",
-                f"Не удалось выполнить helper:\n{e.output}",
-            )
-            return
-        except FileNotFoundError:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Ошибка",
-                "pkexec не найден. Установите polkit или используйте офлайн-режим."
-            )
-            return
-
-        try:
-            data = json.loads(output)
-        except json.JSONDecodeError:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Ошибка",
-                "Helper вернул некорректный JSON."
-            )
-            return
-
-        if "error" in data:
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Ошибка",
-                f"Helper сообщил об ошибке: {data.get('error')}\n{data.get('message', '')}"
-            )
-            return
-
-        events = data.get("events", [])
-        if not events:
-            QtWidgets.QMessageBox.information(
-                self,
-                "Информация",
-                "В журнале не найдено событий."
-            )
-            self._set_events([])
-            return
-
-        self._set_events(events)
-        self.statusBar().showMessage(
-            f"Загружено событий из системного журнала (root): {len(events)}"
-        )
+    # def _load_data_with_pkexec(self):
+    #     """
+    #     Запускает helper через pkexec для чтения /var/log/audit/audit.log с правами root.
+    #     """
+    #     HELPER_FLAG = "--run-helper"
+    #
+    #     if getattr(sys, "frozen", False):
+    #         # Режим PyInstaller (onefile): sys.executable — это бинарник приложения
+    #         app_path = Path(sys.executable).resolve()
+    #         cmd = ["pkexec", str(app_path), HELPER_FLAG]
+    #     else:
+    #         # Режим разработки: запускаем main.py через текущий интерпретатор
+    #         project_root = Path(__file__).resolve().parent.parent
+    #         entry_path = project_root / "main.py"
+    #         python_exe = sys.executable
+    #         cmd = ["pkexec", python_exe, str(entry_path), HELPER_FLAG]
+    #
+    #     try:
+    #         output = subprocess.check_output(
+    #             cmd,
+    #             stderr=subprocess.STDOUT,
+    #             text=True,
+    #         )
+    #     except subprocess.CalledProcessError as e:
+    #         QtWidgets.QMessageBox.warning(
+    #             self,
+    #             "Ошибка",
+    #             f"Не удалось выполнить helper:\n{e.output}",
+    #         )
+    #         return
+    #     except FileNotFoundError:
+    #         QtWidgets.QMessageBox.warning(
+    #             self,
+    #             "Ошибка",
+    #             "pkexec не найден. Установите polkit или используйте офлайн-режим."
+    #         )
+    #         return
+    #
+    #     try:
+    #         data = json.loads(output)
+    #     except json.JSONDecodeError:
+    #         QtWidgets.QMessageBox.warning(
+    #             self,
+    #             "Ошибка",
+    #             "Helper вернул некорректный JSON."
+    #         )
+    #         return
+    #
+    #     if "error" in data:
+    #         QtWidgets.QMessageBox.warning(
+    #             self,
+    #             "Ошибка",
+    #             f"Helper сообщил об ошибке: {data.get('error')}\n{data.get('message', '')}"
+    #         )
+    #         return
+    #
+    #     events = data.get("events", [])
+    #     if not events:
+    #         QtWidgets.QMessageBox.information(
+    #             self,
+    #             "Информация",
+    #             "В журнале не найдено событий."
+    #         )
+    #         self._set_events([])
+    #         return
+    #
+    #     self._set_events(events)
+    #     self.statusBar().showMessage(
+    #         f"Загружено событий из системного журнала (root): {len(events)}"
+    #     )
 
     def _create_tabs(self):
         self.events_tab = QtWidgets.QWidget()
@@ -224,9 +224,9 @@ class MainWindow(QtWidgets.QMainWindow, EventsTabMixin, IncidentsTabMixin, Stats
         file_menu.addAction(open_file_action)
 
         # --- Уже существующий пункт: загрузить системный журнал (root) ---
-        load_root_action = QtWidgets.QAction("Загрузить системный журнал (root)", self)
-        load_root_action.triggered.connect(self._load_data_with_pkexec)
-        file_menu.addAction(load_root_action)
+        # load_root_action = QtWidgets.QAction("Загрузить системный журнал (root)", self)
+        # load_root_action.triggered.connect(self._load_data_with_pkexec)
+        # file_menu.addAction(load_root_action)
 
         file_menu.addSeparator()
 
