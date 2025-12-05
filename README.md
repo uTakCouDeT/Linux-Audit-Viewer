@@ -5,10 +5,12 @@
 Программа разработана в рамках курсового проекта по теме    
 «Исследование возможностей подсистемы аудита Linux (auditd) для расследования инцидентов безопасности».
 
-Фвйл отчёта по курсовой работе (РПЗ) - Отчёт.pdf
+Фвйл отчёта по курсовой работе (РПЗ) - [`Отчёт.pdf`](https://github.com/uTakCouDeT/Linux-Audit-Viewer/blob/master/%D0%9E%D1%82%D1%87%D1%91%D1%82.pdf)
 
-Файл с правилами для auditd - audit-viewer.rules
-  
+Файл с правилами для auditd - [`audit-viewer.rules`](https://github.com/uTakCouDeT/Linux-Audit-Viewer/blob/master/audit-viewer.rules)
+
+Для быстрого запуска программы Linux Audit Viewer можно воспользоваться собранным исполняемым файлом во вкладке [Releases](github.com/uTakCouDeT/Linux-Audit-Viewer/releases). В репозитории представлена основная рабочая версия для Linux, а так же версия для Window с практически полным функционалом работы, за исключением чтения системного журнала и автоматического определения пользователей по uid.
+
 ---  
 
 ## Содержание
